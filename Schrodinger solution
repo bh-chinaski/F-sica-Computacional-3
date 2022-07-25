@@ -1,0 +1,105 @@
+using FFTW, Plots, ProgressMeter
+
+# Space discretization  
+N, L = 2^11, 200
+
+# Define space variable 
+dx = L/N 
+x = range(-L/2, step=dx, length = N)
+
+hbar, mass = 1.0, 1.0 
+
+x0 = 0.0 # Center of the initial distribution
+k0 = 2.0 # 
+
+kin = (hbar * k0)^2 / (2*mass) # Initial kinetic energy 
+
+# Ahora lo que trataremos de crear es el potencial
+# Notar que esta es una forma sencilla de definir el potencial V(x) 
+#plot(x, @. 50 < x < 75)
+
+# pero se puede hacer como 
+vmin, vmax = 25, 40 
+# vmin, vmax = 25, Inf
+V = float(@. vmin < x < vmax) * 0.5kin;
+
+# Time discretization
+dt = 0.01
+tf = 30
+Nt = round(Int, tf/dt)
+# Initial condition 
+# Wavefunction width 
+sigmak = sqrt(0.5tf)
+# Wavefunction
+psi = exp.(@. 1im*k0*(x-x0) - (x-x0)^2 / (4sigmak^2)) / (2pi*sigmak^2)^(0.25);
+
+# Normalize the wavefunction
+psi /= sqrt(sum(abs2, psi)*dx);
+
+
+# Useful quantities before integration 
+k = fftfreq(N, 2pi/dx) # Wavevector
+kmax = maximum(k)
+
+# High-freq filter
+filter = @. exp(-36(k/kmax)^36)
+#plot(k, filter) # para chequear el filtro
+
+Lk = @. 0.5k^2
+op_V = @. exp(-im * V * dt/2) # operador en el espacio Real
+op_T = @. exp(-im * Lk * dt) # operador en el espacio de Fourier  
+
+# Copy initial condition
+u = copy(psi)
+
+# Plan Fourier transforms
+plan = plan_fft(u);
+
+
+uacc = similar(u, N, Nt)
+
+# Start integration
+@showprogress for i in 1:Nt 
+    # Apply potencial operator for dt/2
+    @. u = op_V * u 
+    # u \to Fourier space
+    uhat = plan * u
+    # Apply kinetic operator for dt
+    @. uhat = op_T * filter * uhat  
+    # u \to Real space
+    u = plan \ uhat 
+    # Apply potencial operator for dt/2
+    @. u = op_V * u
+    
+    # Save current value for u 
+    uacc[:, i] = u
+end 
+
+
+prob = abs2.(uacc)
+time = (1:Nt)*dt
+p = plot()
+
+#plot!(p, x, V, line = (:gray))
+vline!(p, [vmin, vmax], line=(:gray))
+plot!(p, x, prob[:, 1], line= (:black), label="t = $(Nt*dt)")
+plot!(p, x, prob[:, end], line= (:red), label="Initial condition")
+plot!(p, ylims=(0,0.12))
+
+# Ahora haremos una animación
+instants_to_plot = 1:10:Nt
+progressbar = Progress(length(instants_to_plot))
+# animación
+anim = @animate for i in instants_to_plot
+    time = round(i*dt, digits=3)
+    p = plot()
+    vline!(p, [vmin, vmax], line=(:gray))
+    plot!(p, x, prob[:, 1], line= (:black), label="Initial condition")
+    plot!(p, x, prob[:, i], line= (:red), label="t = $time")
+    plot!(p, ylims=(0,0.13), legend=:topleft, xlabel="position", ylabel="Probability density")
+    next!(progressbar)
+    #savefig(p,"$i.png")
+end
+
+gif(anim, "schroedinger.gif")
+#qmp4(anim, "schroedinger.mp4")
